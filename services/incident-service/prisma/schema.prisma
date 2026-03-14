@@ -1,0 +1,113 @@
+// ─── Prisma Schema ────────────────────────────────────────────────────────────
+// Incident Service — PostgreSQL
+// National Emergency Response & Dispatch Coordination Platform
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum IncidentType {
+  MEDICAL
+  FIRE
+  CRIME
+  ACCIDENT
+  OTHER
+}
+
+enum IncidentStatus {
+  CREATED
+  DISPATCHED
+  IN_PROGRESS
+  RESOLVED
+  CANCELLED
+}
+
+enum ResponderType {
+  AMBULANCE
+  POLICE
+  FIRE_TRUCK
+}
+
+enum ResponderStatus {
+  AVAILABLE
+  BUSY
+  OFFLINE
+}
+
+// ─── Incidents ────────────────────────────────────────────────────────────────
+model Incident {
+  id               String         @id @default(uuid())
+  citizenName      String         @map("citizen_name")
+  citizenPhone     String?        @map("citizen_phone")
+  incidentType     IncidentType   @map("incident_type")
+  latitude         Float
+  longitude        Float
+  address          String?
+  notes            String?
+  createdBy        String         @map("created_by")       // user id from auth service
+  assignedUnitId   String?        @map("assigned_unit_id")
+  assignedUnitType ResponderType? @map("assigned_unit_type")
+  status           IncidentStatus @default(CREATED)
+  priority         Int            @default(1)              // 1 = normal, 2 = high, 3 = critical
+  dispatchedAt     DateTime?      @map("dispatched_at")
+  resolvedAt       DateTime?      @map("resolved_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  statusHistory    IncidentStatusHistory[]
+  responder        Responder?     @relation(fields: [assignedUnitId], references: [id])
+
+  @@index([status])
+  @@index([incidentType])
+  @@index([createdAt])
+  @@index([createdBy])
+  @@map("incidents")
+}
+
+// ─── Incident Status History ──────────────────────────────────────────────────
+model IncidentStatusHistory {
+  id          String         @id @default(uuid())
+  incidentId  String         @map("incident_id")
+  oldStatus   IncidentStatus @map("old_status")
+  newStatus   IncidentStatus @map("new_status")
+  changedBy   String         @map("changed_by")
+  note        String?
+  changedAt   DateTime       @default(now()) @map("changed_at")
+
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+  @@index([changedAt])
+  @@map("incident_status_history")
+}
+
+// ─── Responders ───────────────────────────────────────────────────────────────
+// Stores registered emergency response units (ambulances, police stations, fire stations)
+model Responder {
+  id           String          @id @default(uuid())
+  name         String
+  type         ResponderType
+  stationName  String          @map("station_name")
+  latitude     Float
+  longitude    Float
+  address      String?
+  phone        String?
+  capacity     Int             @default(1)
+  status       ResponderStatus @default(AVAILABLE)
+  managedBy    String?         @map("managed_by")          // user id from auth service
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  incidents    Incident[]
+
+  @@index([type])
+  @@index([status])
+  @@index([latitude, longitude])
+  @@map("responders")
+}
