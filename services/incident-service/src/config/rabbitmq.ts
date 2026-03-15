@@ -1,4 +1,4 @@
-import amqplib, { Channel, Connection, Options } from 'amqplib';
+import amqplib, { Channel, ChannelModel, Options } from 'amqplib';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from './env';
 import logger from './logger';
@@ -20,8 +20,8 @@ export const CONSUME_QUEUES = {
 } as const;
 
 // ─── Connection State ─────────────────────────────────────────────────────────
-let connection: Connection | null = null;
-let channel:    Channel    | null = null;
+let connection: ChannelModel | null = null;
+let channel:    Channel      | null = null;
 
 // ─── Connect ──────────────────────────────────────────────────────────────────
 export const connectRabbitMQ = async (): Promise<void> => {
@@ -30,27 +30,27 @@ export const connectRabbitMQ = async (): Promise<void> => {
     channel    = await connection.createChannel();
 
     // Assert the main topic exchange
-    await channel.assertExchange(EXCHANGE,    'topic',  { durable: true });
-    await channel.assertExchange(DL_EXCHANGE, 'direct', { durable: true });
+    await channel!.assertExchange(EXCHANGE,    'topic',  { durable: true });
+    await channel!.assertExchange(DL_EXCHANGE, 'direct', { durable: true });
 
     // Assert queues this service will consume from
-    await channel.assertQueue(CONSUME_QUEUES.AI_CALL_PROCESSED, {
+    await channel!.assertQueue(CONSUME_QUEUES.AI_CALL_PROCESSED, {
       durable: true,
       arguments: { 'x-dead-letter-exchange': DL_EXCHANGE },
     });
-    await channel.bindQueue(CONSUME_QUEUES.AI_CALL_PROCESSED, EXCHANGE, 'ai.call.processed');
+    await channel!.bindQueue(CONSUME_QUEUES.AI_CALL_PROCESSED, EXCHANGE, 'ai.call.processed');
 
     // Set prefetch — process one message at a time per consumer
-    channel.prefetch(1);
+    channel!.prefetch(1);
 
     logger.info('RabbitMQ connected and channels ready');
 
     // Handle connection errors & reconnect
-    connection.on('error', (err) => {
-      logger.error('RabbitMQ connection error', { error: err.message });
+    connection!.on('error', (err) => {
+      logger.error('RabbitMQ connection error', { error: (err as Error).message });
       reconnect();
     });
-    connection.on('close', () => {
+    connection!.on('close', () => {
       logger.warn('RabbitMQ connection closed — reconnecting...');
       reconnect();
     });

@@ -90,7 +90,7 @@ export class AuthController {
   // PUT /auth/users/:id/role  (SYSTEM_ADMIN only)
   updateRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const { role } = req.body as { role: Role };
       const user = await authService.updateRole(id, role);
       sendSuccess(res, 200, 'User role updated', user);
@@ -102,7 +102,7 @@ export class AuthController {
   // DELETE /auth/users/:id  (SYSTEM_ADMIN only)
   deactivateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       await authService.deactivateUser(id);
       sendSuccess(res, 200, 'User deactivated', null);
     } catch (err) {

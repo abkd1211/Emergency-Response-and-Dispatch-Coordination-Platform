@@ -38,7 +38,7 @@ export class IncidentController {
   // ─── GET /incidents/:id ───────────────────────────────────────────────────────
   getIncident = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const incident = await incidentService.getIncidentById(req.params.id);
+      const incident = await incidentService.getIncidentById(req.params.id as string);
       sendSuccess(res, 200, 'Incident retrieved', incident);
     } catch (err) { next(err); }
   };
@@ -47,7 +47,7 @@ export class IncidentController {
   updateStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const user    = (req as AuthenticatedRequest).user;
-      const updated = await incidentService.updateIncidentStatus(req.params.id, req.body, user.id);
+      const updated = await incidentService.updateIncidentStatus(req.params.id as string, req.body, user.id);
       sendSuccess(res, 200, 'Incident status updated', updated);
     } catch (err) { next(err); }
   };
@@ -57,7 +57,7 @@ export class IncidentController {
     try {
       const user    = (req as AuthenticatedRequest).user;
       const updated = await incidentService.assignResponder(
-        req.params.id, req.body.responderId, user.id
+        req.params.id as string, req.body.responderId, user.id
       );
       sendSuccess(res, 200, 'Responder assigned', updated);
     } catch (err) { next(err); }
@@ -85,7 +85,7 @@ export class IncidentController {
   updateResponderAvailability = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { status } = req.body as { status: ResponderStatus };
-      const responder  = await incidentService.updateResponderStatus(req.params.id, status);
+      const responder  = await incidentService.updateResponderStatus(req.params.id as string, status);
       sendSuccess(res, 200, 'Responder status updated', responder);
     } catch (err) { next(err); }
   };
@@ -93,7 +93,7 @@ export class IncidentController {
   // ─── GET /incidents/nearest/:lat/:lng/:type ───────────────────────────────────
   getNearestResponder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { lat, lng, type } = req.params;
+      const { lat, lng, type } = req.params as Record<string, string>;
       const result = await incidentService.findNearestAvailableResponder(
         parseFloat(lat),
         parseFloat(lng),
