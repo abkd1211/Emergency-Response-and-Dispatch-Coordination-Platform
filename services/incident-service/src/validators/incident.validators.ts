@@ -109,3 +109,31 @@ export const listIncidentsSchema = z.object({
     type:   z.nativeEnum(IncidentType).optional(),
   }),
 });
+
+// ─── Nearby Incidents ─────────────────────────────────────────────────────────
+export const nearbyIncidentsSchema = z.object({
+  query: z.object({
+    lat:    z.string({ required_error: 'lat is required' })
+            .regex(/^-?\d+(\.\d+)?$/, 'Invalid latitude').transform(Number),
+    lng:    z.string({ required_error: 'lng is required' })
+            .regex(/^-?\d+(\.\d+)?$/, 'Invalid longitude').transform(Number),
+    radius: z.string().optional().transform(v => Math.min(parseInt(v ?? '200'), 2000)),
+  }),
+});
+
+// ─── Link Incident Report ─────────────────────────────────────────────────────
+export const linkIncidentSchema = z.object({
+  body: z.object({
+    parentIncidentId: z
+      .string({ required_error: 'parentIncidentId is required' })
+      .uuid('Invalid incident ID'),
+    citizenName: z
+      .string({ required_error: 'Citizen name is required' })
+      .min(2).max(100).trim(),
+    citizenPhone: z
+      .string()
+      .regex(/^\+?[0-9\s\-]{7,15}$/, 'Invalid phone number')
+      .optional(),
+    notes: z.string().max(1000).trim().optional(),
+  }),
+});

@@ -17,9 +17,12 @@ export class IncidentController {
   // ─── GET /incidents ───────────────────────────────────────────────────────────
   listIncidents = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { page, limit, status, type } = req.query as Record<string, string>;
+      const page   = req.query.page   as string | undefined;
+      const limit  = req.query.limit  as string | undefined;
+      const status = req.query.status as string | undefined;
+      const type   = req.query.type   as string | undefined;
       const result = await incidentService.listIncidents(
-        parseInt(page ?? '1'),
+        parseInt(page  ?? '1'),
         Math.min(parseInt(limit ?? '20'), 100),
         { status: status as never, type: type as never }
       );
@@ -36,28 +39,31 @@ export class IncidentController {
   };
 
   // ─── GET /incidents/:id ───────────────────────────────────────────────────────
-  getIncident = async (req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> => {
+  getIncident = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const incident = await incidentService.getIncidentById(req.params.id as string);
+      const id = req.params.id as string;
+      const incident = await incidentService.getIncidentById(id);
       sendSuccess(res, 200, 'Incident retrieved', incident);
     } catch (err) { next(err); }
   };
 
   // ─── PUT /incidents/:id/status ────────────────────────────────────────────────
-  updateStatus = async (req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> => {
+  updateStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const user    = (req as unknown as AuthenticatedRequest).user;
-      const updated = await incidentService.updateIncidentStatus(req.params.id, req.body, user.id);
+      const user    = (req as AuthenticatedRequest).user;
+      const id = req.params.id as string;
+      const updated = await incidentService.updateIncidentStatus(id, req.body, user.id);
       sendSuccess(res, 200, 'Incident status updated', updated);
     } catch (err) { next(err); }
   };
 
   // ─── PUT /incidents/:id/assign ────────────────────────────────────────────────
-  assignResponder = async (req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> => {
+  assignResponder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const user    = (req as unknown as AuthenticatedRequest).user;
+      const user    = (req as AuthenticatedRequest).user;
+      const id = req.params.id as string;
       const updated = await incidentService.assignResponder(
-        req.params.id as string, req.body.responderId, user.id
+        id, req.body.responderId, user.id
       );
       sendSuccess(res, 200, 'Responder assigned', updated);
     } catch (err) { next(err); }
@@ -82,18 +88,21 @@ export class IncidentController {
   };
 
   // ─── PUT /responders/:id/availability ────────────────────────────────────────
-  updateResponderAvailability = async (req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> => {
+  updateResponderAvailability = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { status } = req.body as { status: ResponderStatus };
-      const responder  = await incidentService.updateResponderStatus(req.params.id as string, status);
+      const id = req.params.id as string;
+      const responder  = await incidentService.updateResponderStatus(id, status);
       sendSuccess(res, 200, 'Responder status updated', responder);
     } catch (err) { next(err); }
   };
 
   // ─── GET /incidents/nearest/:lat/:lng/:type ───────────────────────────────────
-  getNearestResponder = async (req: Request<{ lat: string; lng: string; type: string }>, res: Response, next: NextFunction): Promise<void> => {
+  getNearestResponder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { lat, lng, type } = req.params as Record<string, string>;
+      const lat  = req.params.lat  as string;
+      const lng  = req.params.lng  as string;
+      const type = req.params.type as string;
       const result = await incidentService.findNearestAvailableResponder(
         parseFloat(lat),
         parseFloat(lng),
@@ -104,6 +113,39 @@ export class IncidentController {
         return;
       }
       sendSuccess(res, 200, 'Nearest responder found', result);
+    } catch (err) { next(err); }
+  };
+
+  // ─── GET /incidents/nearby?lat=&lng=&radius= ──────────────────────────────────
+  // Used by frontend BEFORE submitting a new incident form to warn admins
+  // of any already-active incidents within radius metres.
+  getNearbyIncidents = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const lat    = parseFloat(req.query.lat as string);
+      const lng    = parseFloat(req.query.lng as string);
+      const radius = parseInt(req.query.radius as string ?? '200');
+      const nearby = await incidentService.getNearbyIncidents(lat, lng, radius);
+      sendSuccess(res, 200, `Found ${nearby.length} nearby open incident(s)`, nearby);
+    } catch (err) { next(err); }
+  };
+
+  // ─── POST /incidents/link ─────────────────────────────────────────────────────
+  // Admin links a new witness call to an existing active incident
+  // instead of creating a duplicate. Auto-escalates priority if multiple reports.
+  linkIncidentReport = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const user   = (req as AuthenticatedRequest).user;
+      const result = await incidentService.linkIncidentReport(req.body, user.id);
+      sendSuccess(res, 201, 'Report linked to existing incident', result);
+    } catch (err) { next(err); }
+  };
+
+  // ─── GET /incidents/:id/linked-reports ───────────────────────────────────────
+  getLinkedReports = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const id = req.params.id as string;
+      const reports = await incidentService.getLinkedReports(id);
+      sendSuccess(res, 200, 'Linked reports retrieved', reports);
     } catch (err) { next(err); }
   };
 }

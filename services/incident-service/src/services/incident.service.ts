@@ -1,9 +1,9 @@
-import { IncidentStatus, IncidentType, ResponderStatus, ResponderType } from '@prisma/client';
+import { IncidentStatus, IncidentType, ResponderStatus, ResponderType, } from '@prisma/client';
 import prisma from '../config/prisma';
 import redisClient, { REDIS_KEYS, REDIS_TTL } from '../config/redis';
 import { publishEvent, ROUTING_KEYS } from '../config/rabbitmq';
 import logger from '../config/logger';
-import { findNearest, incidentToResponderType } from '../utils/geo';
+import { findNearest, incidentToResponderType, haversineKm } from '../utils/geo';
 import {
   CreateIncidentDto,
   UpdateIncidentStatusDto,
@@ -14,6 +14,8 @@ import {
   IncidentDispatchedPayload,
   IncidentResolvedPayload,
   AiCallProcessedPayload,
+  NearbyIncidentResult,
+  LinkIncidentDto,
 } from '../types';
 
 export class IncidentService {
@@ -423,6 +425,156 @@ export class IncidentService {
     await redisClient.del(REDIS_KEYS.responders(responder.type));
 
     return updated;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // PROXIMITY & DEDUPLICATION
+  // ═══════════════════════════════════════════════════════
+
+  // ─── Check Nearby Open Incidents ─────────────────────────────────────────────
+  // Called before creating a new incident to detect potential duplicates.
+  // Returns any open incidents within radiusMetres of the given coordinates.
+  async checkNearbyOpenIncidents(
+    latitude:     number,
+    longitude:    number,
+    radiusMetres: number = 200
+  ): Promise<NearbyIncidentResult[]> {
+    const openIncidents = await prisma.incident.findMany({
+      where: {
+        status: { in: [IncidentStatus.CREATED, IncidentStatus.DISPATCHED, IncidentStatus.IN_PROGRESS] },
+      },
+      include: {
+        responder: { select: { id: true, name: true, stationName: true } },
+      },
+    });
+
+    const nearby: NearbyIncidentResult[] = [];
+
+    for (const inc of openIncidents) {
+      const distMetres = haversineKm(latitude, longitude, inc.latitude, inc.longitude) * 1000;
+      if (distMetres <= radiusMetres) {
+        nearby.push({
+          incidentId:   inc.id,
+          incidentType: inc.incidentType,
+          status:       inc.status,
+          distanceMetres: Math.round(distMetres),
+          latitude:     inc.latitude,
+          longitude:    inc.longitude,
+          address:      inc.address,
+          createdBy:    inc.createdBy,
+          createdAt:    inc.createdAt,
+          assignedUnit: inc.responder
+            ? { id: inc.responder.id, name: inc.responder.name, station: inc.responder.stationName }
+            : null,
+          linkedReportCount: await prisma.relatedIncidentReport.count({
+            where: { parentIncidentId: inc.id },
+          }),
+        });
+      }
+    }
+
+    // Sort by closest first
+    return nearby.sort((a, b) => a.distanceMetres - b.distanceMetres);
+  }
+
+  // ─── Get Nearby Incidents (for API endpoint) ──────────────────────────────────
+  async getNearbyIncidents(latitude: number, longitude: number, radiusMetres = 500) {
+    return this.checkNearbyOpenIncidents(latitude, longitude, radiusMetres);
+  }
+
+  // ─── Link Incident as Related Report ─────────────────────────────────────────
+  // When a second admin receives a call about an already-active incident,
+  // they can link their report to the parent instead of creating a duplicate.
+  // The parent incident handles dispatch — this just adds witness info.
+  async linkIncidentReport(dto: LinkIncidentDto, createdBy: string) {
+    // Verify parent incident exists and is still open
+    const parent = await prisma.incident.findUnique({
+      where: { id: dto.parentIncidentId },
+      include: { responder: true },
+    });
+
+    if (!parent) {
+      throw Object.assign(
+        new Error('Parent incident not found'),
+        { status: 404, code: 'NOT_FOUND' }
+      );
+    }
+
+    if (parent.status === IncidentStatus.RESOLVED || parent.status === IncidentStatus.CANCELLED) {
+      throw Object.assign(
+        new Error(`Cannot link to a ${parent.status.toLowerCase()} incident`),
+        { status: 409, code: 'INCIDENT_CLOSED' }
+      );
+    }
+
+    // Create the linked report
+    const report = await prisma.relatedIncidentReport.create({
+      data: {
+        parentIncidentId: dto.parentIncidentId,
+        citizenName:      dto.citizenName,
+        citizenPhone:     dto.citizenPhone,
+        notes:            dto.notes,
+        createdBy,
+      },
+    });
+
+    // Escalate priority on parent if multiple reports are coming in
+    const reportCount = await prisma.relatedIncidentReport.count({
+      where: { parentIncidentId: dto.parentIncidentId },
+    });
+
+    // Auto-escalate: 2+ reports → high priority, 4+ → critical
+    let newPriority = parent.priority;
+    if (reportCount >= 4 && parent.priority < 3)      newPriority = 3;
+    else if (reportCount >= 2 && parent.priority < 2) newPriority = 2;
+
+    if (newPriority !== parent.priority) {
+      await prisma.incident.update({
+        where: { id: dto.parentIncidentId },
+        data:  { priority: newPriority },
+      });
+      logger.info('Incident priority auto-escalated', {
+        incidentId:   dto.parentIncidentId,
+        oldPriority:  parent.priority,
+        newPriority,
+        reportCount,
+      });
+    }
+
+    // Invalidate cache
+    await redisClient.del(REDIS_KEYS.incident(dto.parentIncidentId));
+    await redisClient.del(REDIS_KEYS.openIncidents());
+
+    logger.info('Incident linked as related report', {
+      parentIncidentId: dto.parentIncidentId,
+      reportId:         report.id,
+      reportCount,
+    });
+
+    return {
+      report,
+      parentIncident: {
+        id:           parent.id,
+        status:       parent.status,
+        assignedUnit: parent.responder
+          ? { name: parent.responder.name, station: parent.responder.stationName }
+          : null,
+        priority:     newPriority,
+        reportCount,
+      },
+    };
+  }
+
+  // ─── Get All Linked Reports for an Incident ───────────────────────────────────
+  async getLinkedReports(incidentId: string) {
+    const incident = await prisma.incident.findUnique({ where: { id: incidentId } });
+    if (!incident) {
+      throw Object.assign(new Error('Incident not found'), { status: 404, code: 'NOT_FOUND' });
+    }
+    return prisma.relatedIncidentReport.findMany({
+      where:   { parentIncidentId: incidentId },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 
   // ─── Validate Status Transition ───────────────────────────────────────────────

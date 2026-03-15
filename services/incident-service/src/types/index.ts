@@ -134,3 +134,26 @@ export interface AiCallProcessedPayload {
   };
   auto_submit: boolean;
 }
+
+// ─── Nearby Incident Result ───────────────────────────────────────────────────
+export interface NearbyIncidentResult {
+  incidentId:        string;
+  incidentType:      IncidentType;
+  status:            IncidentStatus;
+  distanceMetres:    number;
+  latitude:          number;
+  longitude:         number;
+  address:           string | null;
+  createdBy:         string;
+  createdAt:         Date;
+  assignedUnit:      { id: string; name: string; station: string } | null;
+  linkedReportCount: number;
+}
+
+// ─── Link Incident DTO ────────────────────────────────────────────────────────
+export interface LinkIncidentDto {
+  parentIncidentId: string;
+  citizenName:      string;
+  citizenPhone?:    string;
+  notes?:           string;
+}
