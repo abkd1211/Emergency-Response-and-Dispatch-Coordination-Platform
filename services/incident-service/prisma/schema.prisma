@@ -50,11 +50,17 @@ model Incident {
   longitude        Float
   address          String?
   notes            String?
-  createdBy        String         @map("created_by")       // user id from auth service
+  createdBy        String         @map("created_by")
   assignedUnitId   String?        @map("assigned_unit_id")
   assignedUnitType ResponderType? @map("assigned_unit_type")
   status           IncidentStatus @default(CREATED)
-  priority         Int            @default(1)              // 1 = normal, 2 = high, 3 = critical
+  priority         Int            @default(1)
+
+  // If this is a linked witness report of an existing incident,
+  // parentIncidentId points to the original. Parent handles dispatch;
+  // this record captures additional witness info only.
+  parentIncidentId String?        @map("parent_incident_id")
+
   dispatchedAt     DateTime?      @map("dispatched_at")
   resolvedAt       DateTime?      @map("resolved_at")
   createdAt        DateTime       @default(now()) @map("created_at")
@@ -62,12 +68,33 @@ model Incident {
 
   statusHistory    IncidentStatusHistory[]
   responder        Responder?     @relation(fields: [assignedUnitId], references: [id])
+  linkedReports    RelatedIncidentReport[] @relation("ParentIncident")
 
   @@index([status])
   @@index([incidentType])
   @@index([createdAt])
   @@index([createdBy])
+  @@index([parentIncidentId])
   @@map("incidents")
+}
+
+// ─── Related Incident Reports ─────────────────────────────────────────────────
+// Captures additional witness reports linked to a parent incident.
+// Incidents with multiple linked reports signal higher urgency
+// and are surfaced in the analytics dashboard.
+model RelatedIncidentReport {
+  id               String   @id @default(uuid())
+  parentIncidentId String   @map("parent_incident_id")
+  citizenName      String   @map("citizen_name")
+  citizenPhone     String?  @map("citizen_phone")
+  notes            String?
+  createdBy        String   @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  parentIncident   Incident @relation("ParentIncident", fields: [parentIncidentId], references: [id], onDelete: Cascade)
+
+  @@index([parentIncidentId])
+  @@map("related_incident_reports")
 }
 
 // ─── Incident Status History ──────────────────────────────────────────────────

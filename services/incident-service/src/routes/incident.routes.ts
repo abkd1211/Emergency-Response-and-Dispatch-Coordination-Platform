@@ -10,6 +10,8 @@ import {
   updateResponderAvailabilitySchema,
   nearestResponderSchema,
   listIncidentsSchema,
+  nearbyIncidentsSchema,
+  linkIncidentSchema,
 } from '../validators/incident.validators';
 
 const router = Router();
@@ -59,6 +61,30 @@ router.put(
   authorise('SYSTEM_ADMIN'),
   validate(assignResponderSchema),
   incidentController.assignResponder
+);
+
+// ─── Proximity & Deduplication ───────────────────────────────────────────────
+
+// Check for nearby open incidents BEFORE submitting — used by frontend warning dialog
+// No role restriction: all logged-in admins can query this
+router.get(
+  '/nearby',
+  validate(nearbyIncidentsSchema),
+  incidentController.getNearbyIncidents
+);
+
+// Link a witness report to an existing active incident (prevents duplicate dispatch)
+router.post(
+  '/link',
+  authorise('SYSTEM_ADMIN'),
+  validate(linkIncidentSchema),
+  incidentController.linkIncidentReport
+);
+
+// Get all linked witness reports for an incident
+router.get(
+  '/:id/linked-reports',
+  incidentController.getLinkedReports
 );
 
 // ─── Responders ───────────────────────────────────────────────────────────────
