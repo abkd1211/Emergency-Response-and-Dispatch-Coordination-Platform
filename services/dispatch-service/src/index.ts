@@ -6,6 +6,10 @@ import { connectRedis, disconnectRedis }     from './config/redis';
 import { connectRabbitMQ, disconnectRabbitMQ } from './config/rabbitmq';
 import { startConsumers }         from './services/consumer.service';
 import { startHeartbeatMonitor, stopHeartbeatMonitor } from './services/heartbeat.service';
+import dns from 'dns';
+
+dns.setServers(['1.1.1.1', '8.8.8.8'])
+
 
 const bootstrap = async (): Promise<void> => {
   try {

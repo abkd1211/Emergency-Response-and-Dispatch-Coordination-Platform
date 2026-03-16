@@ -3,3 +3,4 @@ dist/
 .env
 *.log
 coverage/
+git_diff_output.txt

@@ -2,6 +2,7 @@ import { Server as SocketServer, Socket } from 'socket.io';
 import { Server as HttpServer }            from 'http';
 import jwt                                 from 'jsonwebtoken';
 import { env }                             from '../config/env';
+import { Vehicle }     from '../models/vehicle.model';
 import logger                              from '../config/logger';
 import dispatchService                     from '../services/dispatch.service';
 import { SOCKET_EVENTS, GpsPingDto }       from '../types';
@@ -92,8 +93,8 @@ export const createSocketServer = (httpServer: HttpServer): SocketServer => {
     // ── Driver online ────────────────────────────────────────────────────────
     socket.on(SOCKET_EVENTS.DRIVER_ONLINE, async (vehicleId: string) => {
       try {
-        await dispatchService['Vehicle']?.findByIdAndUpdate(vehicleId, {
-          isUnresponsive: false,
+        await Vehicle.findByIdAndUpdate(vehicleId, {
+          isUnresponsive:  false,
           lastHeartbeatAt: new Date(),
         });
         logger.info('Driver online', { vehicleId, socketId: socket.id });

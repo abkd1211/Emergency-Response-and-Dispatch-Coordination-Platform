@@ -25,7 +25,8 @@ export class DispatchController {
   // GET /vehicles/:id
   getVehicle = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const vehicle = await dispatchService.getVehicleById(req.params.id);
+      const id = req.params.id as string;
+      const vehicle = await dispatchService.getVehicleById(id);
       sendSuccess(res, 200, 'Vehicle retrieved', vehicle);
     } catch (err) { next(err); }
   };
@@ -33,7 +34,8 @@ export class DispatchController {
   // GET /vehicles/:id/location
   getVehicleLocation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const location = await dispatchService.getVehicleLocation(req.params.id);
+      const id = req.params.id as string;
+      const location = await dispatchService.getVehicleLocation(id);
       sendSuccess(res, 200, 'Vehicle location retrieved', location);
     } catch (err) { next(err); }
   };
@@ -42,7 +44,7 @@ export class DispatchController {
   updateVehicleLocation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       await dispatchService.processGpsPing({
-        vehicleId:  req.params.id,
+        vehicleId:  req.params.id as string,
         latitude:   req.body.latitude,
         longitude:  req.body.longitude,
         speedKmh:   req.body.speedKmh,
@@ -57,7 +59,8 @@ export class DispatchController {
   getLocationHistory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const limit   = Math.min(parseInt(req.query.limit as string ?? '100'), 500);
-      const history = await dispatchService.getVehicleLocationHistory(req.params.id, limit);
+      const id = req.params.id as string;
+      const history = await dispatchService.getVehicleLocationHistory(id, limit);
       sendSuccess(res, 200, 'Location history retrieved', history);
     } catch (err) { next(err); }
   };
@@ -65,7 +68,8 @@ export class DispatchController {
   // GET /vehicles/:id/assignment
   getActiveAssignment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const assignment = await dispatchService.getActiveAssignment(req.params.id);
+      const id = req.params.id as string;
+      const assignment = await dispatchService.getActiveAssignment(id);
       sendSuccess(res, 200, 'Active assignment retrieved', assignment);
     } catch (err) { next(err); }
   };
@@ -73,7 +77,8 @@ export class DispatchController {
   // POST /vehicles/:id/trip/complete
   completeTrip = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      await dispatchService.completeTrip(req.params.id, req.body.incidentId);
+      const id = req.params.id as string;
+      await dispatchService.completeTrip(id, req.body.incidentId);
       sendSuccess(res, 200, 'Trip completed and summary generated', null);
     } catch (err) { next(err); }
   };
@@ -81,7 +86,8 @@ export class DispatchController {
   // GET /dispatch/:incidentId
   getVehiclesByIncident = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const vehicles = await dispatchService.getVehiclesByIncident(req.params.incidentId);
+      const incidentId = req.params.incidentId as string;
+      const vehicles = await dispatchService.getVehiclesByIncident(incidentId);
       sendSuccess(res, 200, 'Incident vehicles retrieved', vehicles);
     } catch (err) { next(err); }
   };

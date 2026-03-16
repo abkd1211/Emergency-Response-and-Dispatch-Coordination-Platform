@@ -1,4 +1,4 @@
-import amqplib, { Channel, Connection, Options } from 'amqplib';
+import amqplib, { Channel, ChannelModel, Options } from 'amqplib';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from './env';
 import logger from './logger';
@@ -7,19 +7,18 @@ export const EXCHANGE    = 'emergency.events';
 export const DL_EXCHANGE = 'emergency.dead-letter';
 
 export const ROUTING_KEYS = {
-  LOCATION_UPDATED:    'location.updated',
-  VEHICLE_UNRESPONSIVE:'vehicle.unresponsive',
-  TRIP_COMPLETED:      'trip.completed',
+  LOCATION_UPDATED:     'location.updated',
+  VEHICLE_UNRESPONSIVE: 'vehicle.unresponsive',
+  TRIP_COMPLETED:       'trip.completed',
 } as const;
 
-// Queues this service CONSUMES from
 export const CONSUME_QUEUES = {
   INCIDENT_CREATED:    'dispatch.incident.created',
   INCIDENT_DISPATCHED: 'dispatch.incident.dispatched',
 } as const;
 
-let connection: Connection | null = null;
-let channel:    Channel    | null = null;
+let connection: ChannelModel | null = null;
+let channel:    Channel      | null = null;
 
 export const connectRabbitMQ = async (): Promise<void> => {
   try {
@@ -29,7 +28,6 @@ export const connectRabbitMQ = async (): Promise<void> => {
     await channel.assertExchange(EXCHANGE,    'topic',  { durable: true });
     await channel.assertExchange(DL_EXCHANGE, 'direct', { durable: true });
 
-    // Assert queues this service consumes
     for (const q of Object.values(CONSUME_QUEUES)) {
       await channel.assertQueue(q, {
         durable:   true,
@@ -37,14 +35,19 @@ export const connectRabbitMQ = async (): Promise<void> => {
       });
     }
 
-    // Bind queues to exchange
     await channel.bindQueue(CONSUME_QUEUES.INCIDENT_CREATED,    EXCHANGE, 'incident.created');
     await channel.bindQueue(CONSUME_QUEUES.INCIDENT_DISPATCHED, EXCHANGE, 'incident.dispatched');
 
     channel.prefetch(1);
 
-    connection.on('error', (err) => { logger.error('RabbitMQ error', { error: err.message }); reconnect(); });
-    connection.on('close', ()    => { logger.warn('RabbitMQ closed — reconnecting'); reconnect(); });
+    connection.on('error', (err: Error) => {
+      logger.error('RabbitMQ error', { error: err.message });
+      reconnect();
+    });
+    connection.on('close', () => {
+      logger.warn('RabbitMQ closed — reconnecting');
+      reconnect();
+    });
 
     logger.info('RabbitMQ connected');
   } catch (err) {
@@ -79,7 +82,8 @@ export const publishEvent = async <T extends object>(
   };
 
   try {
-    return channel.publish(
+    const ch = channel;
+    return ch.publish(
       EXCHANGE, routingKey,
       Buffer.from(JSON.stringify(message)),
       { persistent: true, contentType: 'application/json', messageId: message.event_id, ...options }
@@ -90,9 +94,14 @@ export const publishEvent = async <T extends object>(
   }
 };
 
-export const getChannel    = (): Channel | null => channel;
+export const getChannel = (): Channel | null => channel;
+
 export const disconnectRabbitMQ = async (): Promise<void> => {
-  await channel?.close();
-  await connection?.close();
-  logger.info('RabbitMQ disconnected');
+  try {
+    if (channel)    await channel.close();
+    if (connection) await connection.close();
+    logger.info('RabbitMQ disconnected');
+  } catch (err) {
+    logger.error('Error disconnecting RabbitMQ', { error: err });
+  }
 };

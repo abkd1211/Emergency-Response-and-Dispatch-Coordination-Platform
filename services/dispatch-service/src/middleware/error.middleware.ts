@@ -23,5 +23,6 @@ export const errorHandler = (
   sendError(res, status, message, undefined, code);
 };
 
-export const notFoundHandler = (req: Request, res: Response): void =>
+export const notFoundHandler = (req: Request, res: Response): void => {
   sendError(res, 404, `Route ${req.method} ${req.path} not found`, undefined, 'NOT_FOUND');
+};
