@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export type VehicleType   = 'AMBULANCE' | 'POLICE' | 'FIRE_TRUCK';
 export type VehicleStatus = 'AVAILABLE' | 'DISPATCHED' | 'EN_ROUTE' | 'ON_SCENE' | 'RETURNING' | 'OFFLINE' | 'UNRESPONSIVE';
@@ -10,6 +10,7 @@ export interface IVehicleLocation {
 }
 
 export interface IVehicle extends Document {
+  _id: Types.ObjectId;
   vehicleCode:       string;
   type:              VehicleType;
   stationId:         string;   // responder ID from incident service

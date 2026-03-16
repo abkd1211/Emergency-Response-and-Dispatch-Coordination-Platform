@@ -16,6 +16,7 @@ import {
   RegisterVehicleDto,
   SOCKET_EVENTS,
   IncidentDispatchedPayload,
+  IncidentCreatedPayload,
 } from '../types';
 
 export class DispatchService {
@@ -56,7 +57,7 @@ export class DispatchService {
       lastHeartbeatAt: new Date(),
     });
 
-    logger.info('Vehicle registered', { vehicleId: vehicle.id, code: vehicle.vehicleCode });
+    logger.info('Vehicle registered', { vehicleId: vehicle._id.toString(), code: vehicle.vehicleCode });
     return vehicle;
   }
 
@@ -152,7 +153,7 @@ export class DispatchService {
     if (!vehicle.currentIncidentId) return;
 
     const assignment = await DispatchAssignment.findOne({
-      vehicleId:  vehicle.id,
+      vehicleId:  vehicle._id.toString(),
       incidentId: vehicle.currentIncidentId,
       status:     { $in: ['ASSIGNED', 'EN_ROUTE'] },
     });
@@ -168,14 +169,14 @@ export class DispatchService {
 
     await DispatchAssignment.findByIdAndUpdate(assignment.id, { estimatedArrivalSec: etaSec });
     await redisClient.setEx(
-      REDIS_KEYS.vehicleEta(vehicle.id),
+      REDIS_KEYS.vehicleEta(vehicle._id.toString()),
       REDIS_TTL.vehicleEta,
       String(etaSec)
     );
 
     // Emit ETA update to incident room
     this.io?.to(`incident:${vehicle.currentIncidentId}`).emit(SOCKET_EVENTS.ETA_UPDATE, {
-      vehicleId:   vehicle.id,
+      vehicleId:   vehicle._id.toString(),
       vehicleCode: vehicle.vehicleCode,
       etaSec,
       etaMinutes:  Math.ceil(etaSec / 60),
@@ -191,22 +192,22 @@ export class DispatchService {
     const isDeviating = deviationMetres > env.MAX_ROUTE_DEVIATION_METRES;
 
     if (isDeviating && !vehicle.routeDeviation) {
-      await Vehicle.findByIdAndUpdate(vehicle.id, { routeDeviation: true });
+      await Vehicle.findByIdAndUpdate(vehicle._id.toString(), { routeDeviation: true });
 
       logger.warn('Route deviation detected', {
-        vehicleId:       vehicle.id,
+        vehicleId:       vehicle._id.toString(),
         deviationMetres: Math.round(deviationMetres),
       });
 
       this.io?.to(`incident:${vehicle.currentIncidentId}`).emit(SOCKET_EVENTS.ROUTE_DEVIATION, {
-        vehicleId:       vehicle.id,
+        vehicleId:       vehicle._id.toString(),
         vehicleCode:     vehicle.vehicleCode,
         deviationMetres: Math.round(deviationMetres),
         currentLocation: { latitude: ping.latitude, longitude: ping.longitude },
       });
     } else if (!isDeviating && vehicle.routeDeviation) {
       // Back on route — clear the flag
-      await Vehicle.findByIdAndUpdate(vehicle.id, { routeDeviation: false });
+      await Vehicle.findByIdAndUpdate(vehicle._id.toString(), { routeDeviation: false });
     }
 
     // ── Arrival Detection ─────────────────────────────────────────────────────
@@ -226,12 +227,12 @@ export class DispatchService {
         actualArrivalSec: arrivalSec,
       });
 
-      await Vehicle.findByIdAndUpdate(vehicle.id, { status: 'ON_SCENE' });
+      await Vehicle.findByIdAndUpdate(vehicle._id.toString(), { status: 'ON_SCENE' });
 
-      logger.info('Vehicle arrived at scene', { vehicleId: vehicle.id, arrivalSec });
+      logger.info('Vehicle arrived at scene', { vehicleId: vehicle._id.toString(), arrivalSec });
 
       this.io?.to(`incident:${vehicle.currentIncidentId}`).emit(SOCKET_EVENTS.VEHICLE_ARRIVED, {
-        vehicleId:   vehicle.id,
+        vehicleId:   vehicle._id.toString(),
         vehicleCode: vehicle.vehicleCode,
         arrivalSec,
         arrivedAt:   now.toISOString(),
@@ -251,14 +252,14 @@ export class DispatchService {
     });
 
     for (const vehicle of activeVehicles) {
-      const alive = await redisClient.get(REDIS_KEYS.vehicleHeartbeat(vehicle.id));
+      const alive = await redisClient.get(REDIS_KEYS.vehicleHeartbeat(vehicle._id.toString()));
 
       if (!alive) {
         // Vehicle has not sent a ping within HEARTBEAT_TIMEOUT_SEC
-        await Vehicle.findByIdAndUpdate(vehicle.id, { isUnresponsive: true });
+        await Vehicle.findByIdAndUpdate(vehicle._id.toString(), { isUnresponsive: true });
 
         logger.warn('Vehicle unresponsive', {
-          vehicleId:   vehicle.id,
+          vehicleId:   vehicle._id.toString(),
           vehicleCode: vehicle.vehicleCode,
           lastSeen:    vehicle.lastHeartbeatAt,
         });
@@ -267,7 +268,7 @@ export class DispatchService {
         if (vehicle.currentIncidentId) {
           this.io?.to(`incident:${vehicle.currentIncidentId}`).emit(
             SOCKET_EVENTS.VEHICLE_UNRESPONSIVE, {
-              vehicleId:   vehicle.id,
+              vehicleId:   vehicle._id.toString(),
               vehicleCode: vehicle.vehicleCode,
               lastSeenAt:  vehicle.lastHeartbeatAt,
             }
@@ -276,7 +277,7 @@ export class DispatchService {
 
         // Publish to RabbitMQ → analytics
         await publishEvent(ROUTING_KEYS.VEHICLE_UNRESPONSIVE, {
-          vehicle_id:   vehicle.id,
+          vehicle_id:   vehicle._id.toString(),
           vehicle_code: vehicle.vehicleCode,
           incident_id:  vehicle.currentIncidentId,
           last_seen_at: vehicle.lastHeartbeatAt,
@@ -382,7 +383,7 @@ export class DispatchService {
     const vehicle = await Vehicle.findById(vehicleId, 'currentLocation vehicleCode type status');
     if (!vehicle) throw Object.assign(new Error('Vehicle not found'), { status: 404, code: 'NOT_FOUND' });
 
-    return { ...vehicle.currentLocation.toObject(), source: 'db' };
+    return { latitude: vehicle.currentLocation.latitude, longitude: vehicle.currentLocation.longitude, updatedAt: vehicle.currentLocation.updatedAt, source: 'db' };
   }
 
   async getVehicleLocationHistory(vehicleId: string, limit = 100) {
@@ -403,6 +404,38 @@ export class DispatchService {
   }
 
   // ═══════════════════════════════════════════════════════
+  // ADMIN BROADCAST — Situational Awareness
+  // ═══════════════════════════════════════════════════════
+
+  // Called when incident.created event arrives from RabbitMQ.
+  // Broadcasts to ALL connected admins so they have real-time
+  // awareness of every new incident — preventing duplicate dispatch.
+  broadcastNewIncident(payload: IncidentCreatedPayload): void {
+    this.io?.to('admins').emit('incident:new', {
+      incidentId:      payload.incident_id,
+      incidentType:    payload.incident_type,
+      latitude:        payload.latitude,
+      longitude:       payload.longitude,
+      citizenName:     payload.citizen_name,
+      status:          payload.status,
+      assignedUnitId:  payload.assigned_unit_id,
+      priority:        payload.priority,
+      createdAt:       payload.created_at,
+    });
+    logger.debug('Broadcast new incident to all admins', { incidentId: payload.incident_id });
+  }
+
+  // Broadcasts priority escalation when a linked report auto-escalates an incident.
+  broadcastPriorityEscalation(incidentId: string, newPriority: number, reportCount: number): void {
+    this.io?.to('admins').emit('incident:priority_escalated', {
+      incidentId,
+      newPriority,
+      reportCount,
+      message: `Incident now has ${reportCount} reports — priority escalated to ${newPriority === 3 ? 'CRITICAL' : 'HIGH'}`,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
   // RABBITMQ EVENT HANDLERS
   // ═══════════════════════════════════════════════════════
 
@@ -417,11 +450,11 @@ export class DispatchService {
     }
 
     // Get current vehicle location for assignment origin
-    const location = await this.getVehicleLocation(vehicle.id);
+    const location = await this.getVehicleLocation(vehicle._id.toString());
 
     // Create dispatch assignment
     await DispatchAssignment.create({
-      vehicleId:      vehicle.id,
+      vehicleId:      vehicle._id.toString(),
       incidentId:     payload.incident_id,
       driverUserId:   vehicle.driverUserId,
       status:         'ASSIGNED',
@@ -433,19 +466,19 @@ export class DispatchService {
     });
 
     // Update vehicle status
-    await Vehicle.findByIdAndUpdate(vehicle.id, {
+    await Vehicle.findByIdAndUpdate(vehicle._id.toString(), {
       status:            'DISPATCHED',
       currentIncidentId: payload.incident_id,
     });
 
     logger.info('Vehicle dispatched to incident', {
-      vehicleId:  vehicle.id,
+      vehicleId:  vehicle._id.toString(),
       incidentId: payload.incident_id,
     });
 
     // Notify the frontend
-    this.io?.to(`vehicle:${vehicle.id}`).emit(SOCKET_EVENTS.VEHICLE_STATUS, {
-      vehicleId:  vehicle.id,
+    this.io?.to(`vehicle:${vehicle._id.toString()}`).emit(SOCKET_EVENTS.VEHICLE_STATUS, {
+      vehicleId:  vehicle._id.toString(),
       status:     'DISPATCHED',
       incidentId: payload.incident_id,
     });
