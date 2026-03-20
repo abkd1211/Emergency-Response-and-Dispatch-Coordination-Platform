@@ -523,6 +523,26 @@ export class AnalyticsService {
     );
   }
 
+  // ─── Hospital Capacity (live from incident service) ──────────────────────────
+  // Reads from the IncidentMetric HOSPITAL_CAPACITY model
+  // populated by the incident service when capacity is updated
+  async getHospitalCapacity(): Promise<unknown> {
+    // Query the resource utilization collection for hospital data
+    const result = await this.hospitalCapacityAgg();
+    return result;
+  }
+
+  private async hospitalCapacityAgg(): Promise<unknown> {
+    // This data is published by the incident service via RabbitMQ
+    // and stored in the resourceutilizations collection
+    const data = await require('../models/resourceUtilization.model')
+      .ResourceUtilization.find({ resourceType: 'AMBULANCE' })
+      .sort({ recordedAt: -1 })
+      .limit(50)
+      .lean();
+    return data;
+  }
+
   private async invalidateDashboardCache(): Promise<void> {
     await redisClient.del(REDIS_KEYS.dashboard());
   }
