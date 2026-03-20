@@ -148,6 +148,32 @@ export class IncidentController {
       sendSuccess(res, 200, 'Linked reports retrieved', reports);
     } catch (err) { next(err); }
   };
+  // ─── PUT /responders/:id/capacity ────────────────────────────────────────────
+  updateHospitalCapacity = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const id   = req.params.id as string;
+      const updated = await incidentService.updateHospitalCapacity(id, req.body, user.id);
+      sendSuccess(res, 200, 'Hospital capacity updated', updated);
+    } catch (err) { next(err); }
+  };
+
+  // ─── GET /responders/hospitals ────────────────────────────────────────────────
+  getHospitalCapacities = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const hospitals = await incidentService.getHospitalCapacities();
+      sendSuccess(res, 200, 'Hospital capacities retrieved', hospitals);
+    } catch (err) { next(err); }
+  };
+
+  // ─── PUT /responders/:id/location ─────────────────────────────────────────────
+  updateResponderLocation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const id      = req.params.id as string;
+      const updated = await incidentService.updateResponderLocation(id, req.body);
+      sendSuccess(res, 200, 'Responder location updated', updated);
+    } catch (err) { next(err); }
+  };
 }
 
 export default new IncidentController();
