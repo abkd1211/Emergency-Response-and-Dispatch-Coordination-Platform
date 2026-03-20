@@ -37,3 +37,4 @@ coverage/
 
 # Docker
 .dockerignore
+/services/dispatch-service

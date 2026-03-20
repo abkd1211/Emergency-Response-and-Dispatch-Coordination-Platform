@@ -1,4 +1,4 @@
-import { IncidentStatus, IncidentType, ResponderStatus, ResponderType, } from '@prisma/client';
+import { IncidentStatus, IncidentType, ResponderStatus, ResponderType, Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import redisClient, { REDIS_KEYS, REDIS_TTL } from '../config/redis';
 import { publishEvent, ROUTING_KEYS } from '../config/rabbitmq';
@@ -16,6 +16,8 @@ import {
   AiCallProcessedPayload,
   NearbyIncidentResult,
   LinkIncidentDto,
+  UpdateHospitalCapacityDto,
+  UpdateResponderLocationDto,
 } from '../types';
 
 export class IncidentService {
@@ -294,6 +296,8 @@ export class IncidentService {
   }
 
   // ─── Find Nearest Available Responder ────────────────────────────────────────
+  // For AMBULANCE type: also checks hospital bed availability so the patient
+  // can be received. Filters out hospitals with 0 available beds.
   async findNearestAvailableResponder(
     latitude: number,
     longitude: number,
@@ -303,11 +307,43 @@ export class IncidentService {
     const cached   = await redisClient.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
+    // Base filter — must be available
+    const baseWhere: Prisma.ResponderWhereInput = { type, status: ResponderStatus.AVAILABLE };
+
+    // For AMBULANCE: also require at least 1 available bed
+    // If no hospital has updated their beds (null), we still include them
+    // (benefit of the doubt — better to dispatch than not)
+    if (type === ResponderType.AMBULANCE) {
+      baseWhere.OR = [
+        { availableBeds: { gt: 0 } },
+        { availableBeds: null },   // beds not yet configured — include by default
+      ];
+    }
+
     const availableResponders = await prisma.responder.findMany({
-      where: { type, status: ResponderStatus.AVAILABLE },
+      where: baseWhere,
     });
 
-    if (availableResponders.length === 0) return null;
+    if (availableResponders.length === 0) {
+      // If AMBULANCE with bed filter found nothing, fall back to any available ambulance
+      if (type === ResponderType.AMBULANCE) {
+        logger.warn('No ambulances with available beds — falling back to any available ambulance');
+        const fallback = await prisma.responder.findMany({
+          where: { type, status: ResponderStatus.AVAILABLE },
+        });
+        if (fallback.length === 0) return null;
+        const nearest = findNearest({ latitude, longitude }, fallback);
+        if (!nearest) return null;
+        return {
+          responderId:   nearest.id,
+          responderName: nearest.name,
+          responderType: nearest.type,
+          distanceKm:    nearest.distanceKm,
+          coordinates:   { latitude: nearest.latitude, longitude: nearest.longitude },
+        };
+      }
+      return null;
+    }
 
     const nearest = findNearest({ latitude, longitude }, availableResponders);
     if (!nearest) return null;
@@ -563,6 +599,118 @@ export class IncidentService {
         reportCount,
       },
     };
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // HOSPITAL CAPACITY
+  // ═══════════════════════════════════════════════════════
+
+  // ─── Update Hospital Bed Capacity ────────────────────────────────────────────
+  // Called by HOSPITAL_ADMIN to update current bed availability.
+  // For MEDICAL incidents, the nearest-responder algorithm factors in
+  // bed availability to ensure the ambulance goes to a hospital that
+  // can actually receive the patient.
+  async updateHospitalCapacity(
+    responderId: string,
+    dto: UpdateHospitalCapacityDto,
+    updatedBy: string
+  ) {
+    const responder = await prisma.responder.findUnique({ where: { id: responderId } });
+    if (!responder) {
+      throw Object.assign(new Error('Responder not found'), { status: 404, code: 'NOT_FOUND' });
+    }
+    if (responder.type !== 'AMBULANCE') {
+      throw Object.assign(
+        new Error('Capacity updates only apply to AMBULANCE type responders'),
+        { status: 400, code: 'INVALID_RESPONDER_TYPE' }
+      );
+    }
+
+    const updated = await prisma.responder.update({
+      where: { id: responderId },
+      data: {
+        totalBeds:     dto.totalBeds,
+        availableBeds: dto.availableBeds,
+        hospitalId:    dto.hospitalId,
+        bedsUpdatedAt: new Date(),
+      },
+    });
+
+    // Log the capacity snapshot for analytics
+    await (prisma as unknown as Record<string, unknown>).hospitalCapacityLog &&
+      (prisma as unknown as Record<string, unknown>).hospitalCapacityLog;
+
+    // Use raw query to insert log since Prisma client may not be regenerated yet
+    await prisma.$executeRaw`
+      INSERT INTO hospital_capacity_logs
+        (id, responder_id, hospital_id, station_name, total_beds, available_beds, updated_by)
+      VALUES
+        (gen_random_uuid(), ${responderId}, ${dto.hospitalId ?? responderId},
+         ${responder.stationName}, ${dto.totalBeds}, ${dto.availableBeds}, ${updatedBy})
+    `;
+
+    // Invalidate responder cache
+    await redisClient.del(REDIS_KEYS.responders(responder.type));
+    await redisClient.del(REDIS_KEYS.responders('ALL'));
+
+    logger.info('Hospital capacity updated', {
+      responderId,
+      stationName:   responder.stationName,
+      totalBeds:     dto.totalBeds,
+      availableBeds: dto.availableBeds,
+    });
+
+    return updated;
+  }
+
+  // ─── Get Hospital Capacities ──────────────────────────────────────────────────
+  async getHospitalCapacities() {
+    const hospitals = await prisma.responder.findMany({
+      where: { type: 'AMBULANCE' },
+      select: {
+        id:            true,
+        name:          true,
+        stationName:   true,
+        latitude:      true,
+        longitude:     true,
+        status:        true,
+        totalBeds:     true,
+        availableBeds: true,
+        bedsUpdatedAt: true,
+        capacity:      true,
+      },
+      orderBy: { stationName: 'asc' },
+    });
+    return hospitals;
+  }
+
+  // ─── Update Responder Location ────────────────────────────────────────────────
+  // Allows service admins to correct or update their station's GPS coordinates.
+  // Important for accuracy of the nearest-responder algorithm.
+  async updateResponderLocation(
+    responderId: string,
+    dto: UpdateResponderLocationDto
+  ) {
+    const responder = await prisma.responder.findUnique({ where: { id: responderId } });
+    if (!responder) {
+      throw Object.assign(new Error('Responder not found'), { status: 404, code: 'NOT_FOUND' });
+    }
+
+    const updated = await prisma.responder.update({
+      where: { id: responderId },
+      data: {
+        latitude:  dto.latitude,
+        longitude: dto.longitude,
+        ...(dto.address && { address: dto.address }),
+      },
+    });
+
+    // Invalidate all nearest-responder cache keys for this type
+    await redisClient.del(REDIS_KEYS.responders(responder.type));
+    await redisClient.del(REDIS_KEYS.responders('ALL'));
+
+    logger.info('Responder location updated', { responderId, lat: dto.latitude, lng: dto.longitude });
+    return updated;
   }
 
   // ─── Get All Linked Reports for an Incident ───────────────────────────────────

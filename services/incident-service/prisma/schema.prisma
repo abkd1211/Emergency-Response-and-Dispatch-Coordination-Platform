@@ -131,10 +131,34 @@ model Responder {
   createdAt    DateTime        @default(now()) @map("created_at")
   updatedAt    DateTime        @updatedAt @map("updated_at")
 
+  // Hospital-specific fields (populated for AMBULANCE type responders)
+  hospitalId        String?  @map("hospital_id")
+  totalBeds         Int?     @map("total_beds")
+  availableBeds     Int?     @map("available_beds")
+  bedsUpdatedAt     DateTime? @map("beds_updated_at")
+
   incidents    Incident[]
 
   @@index([type])
   @@index([status])
   @@index([latitude, longitude])
+  @@index([availableBeds])
   @@map("responders")
+}
+
+// ─── Hospital Capacity Snapshots ──────────────────────────────────────────────
+// Tracks historical hospital capacity updates for analytics
+model HospitalCapacityLog {
+  id              String   @id @default(uuid())
+  responderId     String   @map("responder_id")
+  hospitalId      String   @map("hospital_id")
+  stationName     String   @map("station_name")
+  totalBeds       Int      @map("total_beds")
+  availableBeds   Int      @map("available_beds")
+  updatedBy       String   @map("updated_by")
+  recordedAt      DateTime @default(now()) @map("recorded_at")
+
+  @@index([responderId])
+  @@index([recordedAt])
+  @@map("hospital_capacity_logs")
 }

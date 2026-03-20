@@ -137,3 +137,38 @@ export const linkIncidentSchema = z.object({
     notes: z.string().max(1000).trim().optional(),
   }),
 });
+
+// ─── Update Hospital Capacity ─────────────────────────────────────────────────
+export const updateHospitalCapacitySchema = z.object({
+  params: z.object({
+    id: z.string().min(1, 'Responder ID is required'),
+  }),
+  body: z.object({
+    totalBeds: z
+      .number({ required_error: 'Total beds is required' })
+      .int().min(0).max(10000),
+    availableBeds: z
+      .number({ required_error: 'Available beds is required' })
+      .int().min(0).max(10000),
+    hospitalId: z.string().optional(),
+  }).refine(
+    (d) => d.availableBeds <= d.totalBeds,
+    { message: 'Available beds cannot exceed total beds', path: ['availableBeds'] }
+  ),
+});
+
+// ─── Update Responder Location ────────────────────────────────────────────────
+export const updateResponderLocationSchema = z.object({
+  params: z.object({
+    id: z.string().min(1, 'Responder ID is required'),
+  }),
+  body: z.object({
+    latitude: z
+      .number({ required_error: 'Latitude is required' })
+      .min(-90).max(90),
+    longitude: z
+      .number({ required_error: 'Longitude is required' })
+      .min(-180).max(180),
+    address: z.string().max(255).optional(),
+  }),
+});

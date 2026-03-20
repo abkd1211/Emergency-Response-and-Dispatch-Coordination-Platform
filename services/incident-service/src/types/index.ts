@@ -157,3 +157,17 @@ export interface LinkIncidentDto {
   citizenPhone?:    string;
   notes?:           string;
 }
+
+// ─── Hospital Capacity DTO ────────────────────────────────────────────────────
+export interface UpdateHospitalCapacityDto {
+  totalBeds:     number;
+  availableBeds: number;
+  hospitalId?:   string;
+}
+
+// ─── Update Responder Location DTO ───────────────────────────────────────────
+export interface UpdateResponderLocationDto {
+  latitude:  number;
+  longitude: number;
+  address?:  string;
+}

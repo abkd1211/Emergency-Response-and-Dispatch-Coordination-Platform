@@ -12,6 +12,8 @@ import {
   listIncidentsSchema,
   nearbyIncidentsSchema,
   linkIncidentSchema,
+  updateHospitalCapacitySchema,
+  updateResponderLocationSchema,
 } from '../validators/incident.validators';
 
 const router = Router();
@@ -104,6 +106,29 @@ router.put(
   '/responders/:id/availability',
   validate(updateResponderAvailabilitySchema),
   incidentController.updateResponderAvailability
+);
+
+// ─── Hospital Capacity ────────────────────────────────────────────────────────
+// HOSPITAL_ADMIN updates bed count — factors into MEDICAL dispatch algorithm
+router.get(
+  '/responders/hospitals',
+  incidentController.getHospitalCapacities
+);
+
+router.put(
+  '/responders/:id/capacity',
+  authorise('HOSPITAL_ADMIN', 'SYSTEM_ADMIN'),
+  validate(updateHospitalCapacitySchema),
+  incidentController.updateHospitalCapacity
+);
+
+// ─── Responder Location Update ────────────────────────────────────────────────
+// Service admins can correct their station GPS coordinates
+router.put(
+  '/responders/:id/location',
+  authorise('SYSTEM_ADMIN', 'HOSPITAL_ADMIN', 'POLICE_ADMIN', 'FIRE_SERVICE_ADMIN'),
+  validate(updateResponderLocationSchema),
+  incidentController.updateResponderLocation
 );
 
 export default router;
